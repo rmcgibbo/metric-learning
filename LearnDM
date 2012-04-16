@@ -35,7 +35,6 @@ for traj in args.project.EnumTrajs():
     B.append(b)
     C.append(c)
 triplets = (np.concatenate(A), np.concatenate(B), np.concatenate(C))
-#triplets = (a[0:len(c)], b[0:len(c)], c)
 
 if args.diagonal:
     X = optimize_dmetric(triplets, alpha=2)
