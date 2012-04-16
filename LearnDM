@@ -1,0 +1,75 @@
+#!/usr/bin/env python
+
+import sys, os
+import numpy as np
+import scipy.io
+from lmmdm import optimize_metric, optimize_dmetric
+from Emsmbuilder import arglib, metrics, Trajectory
+import IPython as ip
+import scipy.cluster.vq
+
+parser = arglib.ArgumentParser(description='Learn Distance Metric')
+parser.add_argument('project')
+parser.add_argument('diagonal', description='Only use diagonal', action='store_true', default=False, type=bool)
+parser.add_argument('output', description='Location to save output (.mtx)', default='metric.mtx')
+parser.add_argument('close', type=int)
+parser.add_argument('far', type=int)
+parser.add_argument('k', type=int, nargs='+', default=[0])
+args = parser.parse_args()
+
+if args.close >= args.far:
+    print >> sys.stderr, '{0}: Error: clost must be less than far'.format(os.path.split(sys.argv[0])[1])
+    sys.exit(1)
+arglib.die_if_path_exists(args.output)
+
+metric = metrics.Dihedral(angles='phi')
+A, B, C = [], [], []
+for traj in args.project.EnumTrajs():
+    ptraj = metric.prepare_trajectory(traj)
+    a = ptraj[::args.close, :]
+    b = ptraj[args.close::args.close, :]
+    c = ptraj[args.far::args.close, :]
+    a = a[0:len(c)]
+    b = b[0:len(c)]
+    A.append(a)
+    B.append(b)
+    C.append(c)
+triplets = (np.concatenate(A), np.concatenate(B), np.concatenate(C))
+#triplets = (a[0:len(c)], b[0:len(c)], c)
+
+if args.diagonal:
+    X = optimize_dmetric(triplets, alpha=2)
+else:
+    X = optimize_metric(triplets, alpha=2, beta=0)
+
+u, v = np.linalg.eig(X)
+u[np.where(u < 0)] = 0
+sqrt_X = np.real(v * np.diag(np.sqrt(u))*np.linalg.inv(v))
+transformed_data = np.array(ptraj * sqrt_X)
+
+if args.k != [0]:
+    print 'Running KMeans Clustering with new metric'
+    for k in args.k:
+        k = int(k)
+        centroids, labels = scipy.cluster.vq.kmeans2(transformed_data, k=k, minit='points')
+        self_transitions = 0.0
+        for i in xrange(1, len(labels)):
+            if labels[i] == labels[i-1]:
+                self_transitions += 1
+        print 'Self-transition probability (k={0}): {1}'.format(k, self_transitions / (len(labels) - 1))
+
+    print 'Running KMeans clustering with euclidean metric'
+    for k in args.k:
+        k = int(k)
+        centroids, labels = scipy.cluster.vq.kmeans2(data, k=k, minit='points')
+        self_transitions = 0.0
+        for i in xrange(1, len(labels)):
+            if labels[i] == labels[i-1]:
+                self_transitions += 1
+        print 'Self-transition probability (k={0}): {1}'.format(k, self_transitions / (len(labels) - 1))
+    
+else:
+    print 'Skipping clustering'
+
+scipy.io.mmwrite(args.output, X)
+print '\nSaved {0}'.format(args.output)

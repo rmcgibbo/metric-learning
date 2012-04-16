@@ -1,0 +1,11 @@
+Categorial distance metric
+
+use DSSP to get assignment for each residue, then code the string as a binary vector with 7 bits for each residue (if there are 7 DSSP classes). For any residue, 6 of the bits will be off and one of them will be on, corresponding to which state that residue is in.
+
+Now learn a metric for these vectors of the same form (a.T * X * a), but where X is constrained to be block off-diagonal. That is, the only places that are nonzero are the off-diagonal coupling elements between two indicator variables that are talking about the same residue. It will also need to be symmetric.
+
+So for N residues that each have k categorial states, the X matrix will have  N*k*(k-1)/2 nonzero entries. Each of these entries should be positive, and I guess the sum of all the nonzero entries should be constrained to one.
+
+The only thing that needs to be done is to write down the partials.
+
+
