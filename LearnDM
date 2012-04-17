@@ -16,6 +16,7 @@ parser.add_argument('close', type=int)
 parser.add_argument('angles', choices=['phi', 'phi/psi'], default='phi/psi')
 parser.add_argument('far', type=int)
 parser.add_argument('k', type=int, nargs='+', default=[0])
+parser.add_argument('trajs', type=int, nargs='+', default=[-1])
 args = parser.parse_args()
 
 if args.close >= args.far:
@@ -23,10 +24,13 @@ if args.close >= args.far:
     sys.exit(1)
 arglib.die_if_path_exists(args.output)
 
-metric = metrics.Dihedral(angles='phi')
+metric = metrics.Dihedral(angles=args.angles)
 A, B, C = [], [], []
-for traj in args.project.EnumTrajs():
-    ptraj = metric.prepare_trajectory(traj)
+for i, traj in enumerate(args.project.EnumTrajs()):
+    if args.trajs != [-1] and i not in args.trajs:
+        continue
+    
+    ptraj = metric.prepare_trajectory(traj)[0:len(traj)/2]
     a = ptraj[::args.close, :]
     b = ptraj[args.close::args.close, :]
     c = ptraj[args.far::args.close, :]
@@ -35,10 +39,11 @@ for traj in args.project.EnumTrajs():
     A.append(a)
     B.append(b)
     C.append(c)
+    
 triplets = (np.concatenate(A), np.concatenate(B), np.concatenate(C))
 
 if args.diagonal:
-    X = optimize_dmetric(triplets, alpha=2)
+    X = optimize_dmetric(triplets, alpha=0)
 else:
     X = optimize_metric(triplets, alpha=2, beta=0)
 

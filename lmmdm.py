@@ -28,7 +28,7 @@ class DiagonalMetricCalculator(object):
             
             print 'numeric' , (o2-o1)/dx
             print 'analytic', g1[i]
-            #assert np.abs((o2 - o1)/dx - g1[i]) < 1e-3
+            assert np.abs((o2 - o1)/dx - g1[i])/g1[i] < 1e-5
         
         rho_and_omegas = np.empty(self.dim + 1)
         rho_and_omegas[0] = np.random.randn()
@@ -37,7 +37,27 @@ class DiagonalMetricCalculator(object):
         for i in range(len(rho_and_omegas)):
             test_deriv(i)
             
-        print 'Passed Test 1'
+        print 'Passed Test 1\n\n'
+    
+    def test3(self):
+        def test_deriv(i, dx=1e-6):
+            o1, g1 = self.minus_huber_objective_and_grad(rho_and_omegas)
+            new = np.copy(rho_and_omegas)
+            new[i] += dx
+            o2 =  self.minus_huber_objective_and_grad(new)[0]
+
+            print 'numeric' , (o2-o1)/dx
+            print 'analytic', g1[i]
+            assert np.abs(((o2 - o1)/dx - g1[i])/(max(g1[i], (o2-o1)/dx))) < 1e-5
+
+        rho_and_omegas = np.empty(self.dim + 1)
+        rho_and_omegas[0] = np.random.randn()
+        rho_and_omegas[1:] = np.random.randn(self.dim)
+
+        for i in range(len(rho_and_omegas)):
+            test_deriv(i)
+
+        print 'Passed Test 3'
     
     def test2(self):
         def test_deriv(i, dx=1e-5):
@@ -50,45 +70,57 @@ class DiagonalMetricCalculator(object):
             analytic = g1[i]
             print 'analytic', analytic
             print 'numeric ', numeric
-            assert np.abs(numeric - analytic) < 1e-3
-            
-        R_and_Ws = np.random.randn(self.dim + 1)
+            assert np.abs((numeric - analytic)/max(numeric, analytic)) < 1e-4
         
-        for i in range(self.dim + 1):
+        if self.dihedral_sincos_equality_constraint:
+            R_and_Ws = np.random.randn(1 + self.dim/2)
+        else:
+            R_and_Ws = np.random.randn(self.dim + 1)
+        
+        for i in range(len(R_and_Ws)):
            test_deriv(i)
-        
-        #test_deriv(1)
-        
-        #self.transformed(R, W)
         
         print 'Passed Test 2'
     
     
-    def __init__(self, triplets, alpha, verbose=True):
+    def __init__(self, triplets, alpha, verbose=True, is_dihedrals=True):
         a,b,c = triplets
         self.num_triplets, self.dim = a.shape
+        self.num_triplets = float(self.num_triplets)
         assert b.shape == a.shape
         assert c.shape == a.shape
         self.sq_triplets_b2c = np.square(np.matrix((a - c).T)) - np.square(np.matrix((a - b).T))
-        self.K = alpha
+        self.K = alpha/4.0
         self.printer = sys.stdout if verbose else open('/dev/null', 'w')
         
-        
-        R_and_Ws = np.ones(self.dim+1)
+        self.dihedral_sincos_equality_constraint = bool(is_dihedrals)
+        if self.dihedral_sincos_equality_constraint:
+            assert self.dim % 2 == 0, 'must be an even number'
+            R_and_Ws = np.ones(self.dim/2 + 1)
+        else:
+            R_and_Ws = np.ones(self.dim+1)
         R_and_Ws[0] = 1
         
         obj = lambda X: self.transformed_minus_objective_and_grad(X)[0]
         grad = lambda X: self.transformed_minus_objective_and_grad(X)[1]
         
-        R_and_Ws = fmin_bfgs(f=obj, x0=R_and_Ws, fprime=grad, disp=False)
         
-        W = R_and_Ws[1:]
-        W2 = np.square(W)
+        # self.test1()
+        #self.test2()
+        #self.test3()
+        #sys.exit(1)
+        
+        R_and_Ws = fmin_bfgs(f=obj, x0=R_and_Ws, fprime=grad, disp=False)
+                
+        W2 = np.square(R_and_Ws[1:])
+        if self.dihedral_sincos_equality_constraint:
+            W2 = np.hstack((W2, W2))
+        
         self.X = np.matrix(np.diag(W2/ np.sum(W2)))
         self.rho = R_and_Ws[0]**2
         
         print >> self.printer, 'X'
-        print >> self.printer, self.X
+        print print_lowprec(self.X, printer=self.printer, precision=2)
         print >> self.printer, 'margin: {0:5f}'.format(self.rho)
         
     
@@ -97,9 +129,11 @@ class DiagonalMetricCalculator(object):
         omegas = rho_and_omegas[1:len(rho_and_omegas)]
         assert len(omegas) == self.dim
         
-        margin = (np.diag(omegas)*self.sq_triplets_b2c).sum(axis=0) - rho
-        mmargin = np.ma.masked_greater(margin, 0)
+        margin = (np.diag(omegas)*self.sq_triplets_b2c).sum(axis=0)
+        mmargin = np.ma.masked_greater(margin - rho, 0)
         mmargin = mmargin.filled(0)
+        
+        print 'Classification accuracy: {0}/{1}={2:5f}'.format(np.count_nonzero(margin > 0), self.num_triplets, np.count_nonzero(margin > 0)/float(self.num_triplets))
         
         loss = np.square(mmargin).sum() / self.num_triplets
         objective = self.K * rho - loss
@@ -110,6 +144,38 @@ class DiagonalMetricCalculator(object):
         grad[1:self.dim+1] = grad_omegas
                         
         return -objective, -grad
+        
+    
+    def minus_huber_objective_and_grad(self, rho_and_omegas, h=0.5):
+        rho = rho_and_omegas[0]
+        omegas = rho_and_omegas[1:len(rho_and_omegas)]
+        assert len(omegas) == self.dim
+        margin = (np.diag(omegas)*self.sq_triplets_b2c).sum(axis=0)
+        margin = np.ravel(np.array(margin))
+        
+        margin_minus_rho = margin - rho
+        greater_h = np.where(margin_minus_rho >= h)[0]
+        between = np.where(np.logical_and(-h <  np.array(margin_minus_rho), margin_minus_rho < h))[0]
+        less_minus_h = np.where(margin_minus_rho <= -h)[0]
+
+        t1 = np.sum(np.square((h - margin_minus_rho[between]))) / (4*h*self.num_triplets)
+        t2 = -np.sum(margin_minus_rho[less_minus_h]) / self.num_triplets
+        loss = t1 + t2
+        print 'Classification accuracy: {0}/{1}={2:5f}'.format(np.count_nonzero(margin > 0), self.num_triplets, np.count_nonzero(margin > 0)/self.num_triplets)
+
+        objective = self.K * rho - loss
+        
+        grad = np.empty(self.dim + 1)
+        grad_rho_t1 = -(2 * h * self.num_triplets)**(-1) * np.sum(h-margin_minus_rho[between])
+        grad_rho_t2 = -len(less_minus_h) / self.num_triplets
+        grad[0] = self.K + grad_rho_t1 + grad_rho_t2
+        
+        grad_omega_t1 = (2 * h * self.num_triplets)**(-1) * np.matrix(h - margin_minus_rho[between,:]) * self.sq_triplets_b2c.T[between, :]
+        grad_omega_t2 = self.sq_triplets_b2c.T[less_minus_h,:].sum(axis=0) / self.num_triplets
+        grad[1:] = grad_omega_t1 + grad_omega_t2
+        
+        #print objective, grad
+        return -objective, -grad
     
     @memoized
     def transformed_minus_objective_and_grad(self, R_and_Ws):
@@ -117,7 +183,15 @@ class DiagonalMetricCalculator(object):
         W = R_and_Ws[1:]
         W2 = np.square(W)
         omegas = W2 / np.sum(W2)
-        objective, grad_rho_omegas = self.minus_objective_and_grad(np.hstack(([rho], omegas)))
+        
+        if self.dihedral_sincos_equality_constraint:
+            assert len(W) == self.dim / 2, 'len(W)={0}, self.dim={1}'.format(len(W), self.dim)
+            W = np.hstack((W, W))
+            W2 = np.hstack((W2, W2))
+            omegas = np.hstack((omegas, omegas))
+        
+        objective, grad_rho_omegas = self.minus_huber_objective_and_grad(np.hstack(([rho], omegas)))
+        
         partial_R = 2*R_and_Ws[0]*grad_rho_omegas[0]
         grad_omegas = grad_rho_omegas[1:]
         
@@ -125,12 +199,13 @@ class DiagonalMetricCalculator(object):
         jacobian += np.diag(2*W / np.sum(W2))
         grad_W = np.array(jacobian * np.matrix(grad_omegas).T)[:,0]
         
+        if self.dihedral_sincos_equality_constraint:
+            grad_W = 2 * (grad_W[0:len(grad_W)/2] + grad_W[len(grad_W)/2:])
+                
         #print 'Computuing: Omegas', omegas
         #print 'gradient', np.hstack(([partial_R], grad_W))
         return objective, np.hstack(([partial_R], grad_W))
     
-    
-
 
 class MetricCalculator(object):
     @classmethod

@@ -92,12 +92,14 @@ def main():
     triplets = get_triplets(r1, r2, num_triplets)
     triplets2 = tuple(np.copy(t) for t in triplets)
     
-    X = optimize_metric(triplets, alpha=2, beta=0)
-    print 'Full Rank'
-    print X
+    #X = optimize_metric(triplets, alpha=2, beta=0)
+    #print 'Full Rank'
+    #print X
     X = optimize_dmetric(triplets2, alpha=2)
     print 'Diagonal'
     print X
+    sys.exit(1)
+    
     
     u, v = np.linalg.eig(X)
     u[np.where(u < 0)] = 0
