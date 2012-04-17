@@ -30,7 +30,7 @@ for i, traj in enumerate(args.project.EnumTrajs()):
     if args.trajs != [-1] and i not in args.trajs:
         continue
     
-    ptraj = metric.prepare_trajectory(traj)[0:len(traj)/2]
+    ptraj = metric.prepare_trajectory(traj)
     a = ptraj[::args.close, :]
     b = ptraj[args.close::args.close, :]
     c = ptraj[args.far::args.close, :]
