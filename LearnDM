@@ -1,9 +1,10 @@
 #!/usr/bin/env python
+import importing; importing.install()
 
 import sys, os
 import numpy as np
 import scipy.io
-from lmmdm import optimize_metric, optimize_dmetric
+from lmmdm import optimize_metric, optimize_dmetric, get_triplets
 from Emsmbuilder import arglib, metrics, Trajectory
 import IPython as ip
 import scipy.cluster.vq
@@ -15,66 +16,90 @@ parser.add_argument('output', description='Location to save output (.mtx)', defa
 parser.add_argument('close', type=int)
 parser.add_argument('angles', choices=['phi', 'phi/psi'], default='phi/psi')
 parser.add_argument('far', type=int)
-parser.add_argument('k', type=int, nargs='+', default=[0])
+#parser.add_argument('k', type=int, nargs='+', default=[0])
 parser.add_argument('trajs', type=int, nargs='+', default=[-1])
+parser.add_argument('rmsd_cutoff', type=float, description='only use data from within this cutoff to pdb (nanometers). -1 means not used', default=-1)
+parser.add_argument('native_pdb', default='None')
+parser.add_argument('atom_indices', default='None')
 args = parser.parse_args()
+args.trajs = [int(i) for i in args.trajs]
+if args.rmsd_cutoff > 0:
+    use_rmsd_cutoff = True
+    atom_indices = np.loadtxt(args.atom_indices, dtype=int)
+    rmsd = metrics.RMSD(atom_indices)
+    pdb = rmsd.prepare_trajectory(Trajectory.LoadTrajectoryFile(args.native_pdb))
+else:
+    use_rmsd_cutoff = False
 
 if args.close >= args.far:
     print >> sys.stderr, '{0}: Error: clost must be less than far'.format(os.path.split(sys.argv[0])[1])
     sys.exit(1)
 arglib.die_if_path_exists(args.output)
+print args
+
+#sys.exit(1)
 
 metric = metrics.Dihedral(angles=args.angles)
+
 A, B, C = [], [], []
-for i, traj in enumerate(args.project.EnumTrajs()):
-    if args.trajs != [-1] and i not in args.trajs:
+for i in range(args.project['NumTrajs']):
+    if args.trajs != [-1] and (i not in args.trajs):
+        print 'skipping', i
         continue
     
-    ptraj = metric.prepare_trajectory(traj)
-    a = ptraj[::args.close, :]
-    b = ptraj[args.close::args.close, :]
-    c = ptraj[args.far::args.close, :]
-    a = a[0:len(c)]
-    b = b[0:len(c)]
+    traj = args.project.LoadTraj(i)
+    
+    #traj = np.arange(args.project['TrajLengths'][i])
+    if use_rmsd_cutoff:
+        # useing comparator of np.less only selects the data closer than the RMSD cutoff
+        a,b,c = get_triplets(traj, args.close, args.far, metric, rmsd, args.rmsd_cutoff, np.less, pdb)
+    else:
+        a,b,c = get_triplets(traj, args.close, args.far, metric)
+    
+    del traj
     A.append(a)
     B.append(b)
     C.append(c)
-    
+
 triplets = (np.concatenate(A), np.concatenate(B), np.concatenate(C))
+if len(triplets[0]) == 0:
+    raise Exception('No data')
+
+
 
 if args.diagonal:
     X = optimize_dmetric(triplets, alpha=0)
 else:
     X = optimize_metric(triplets, alpha=2, beta=0)
 
-u, v = np.linalg.eig(X)
-u[np.where(u < 0)] = 0
-sqrt_X = np.real(v * np.diag(np.sqrt(u))*np.linalg.inv(v))
-transformed_data = np.array(ptraj * sqrt_X)
+#u, v = np.linalg.eig(X)
+#u[np.where(u < 0)] = 0
+#sqrt_X = np.real(v * np.diag(np.sqrt(u))*np.linalg.inv(v))
+#transformed_data = np.array(ptraj * sqrt_X)
 
-if args.k != [0]:
-    print 'Running KMeans Clustering with new metric'
-    for k in args.k:
-        k = int(k)
-        centroids, labels = scipy.cluster.vq.kmeans2(transformed_data, k=k, minit='points')
-        self_transitions = 0.0
-        for i in xrange(1, len(labels)):
-            if labels[i] == labels[i-1]:
-                self_transitions += 1
-        print 'Self-transition probability (k={0}): {1}'.format(k, self_transitions / (len(labels) - 1))
-
-    print 'Running KMeans clustering with euclidean metric'
-    for k in args.k:
-        k = int(k)
-        centroids, labels = scipy.cluster.vq.kmeans2(data, k=k, minit='points')
-        self_transitions = 0.0
-        for i in xrange(1, len(labels)):
-            if labels[i] == labels[i-1]:
-                self_transitions += 1
-        print 'Self-transition probability (k={0}): {1}'.format(k, self_transitions / (len(labels) - 1))
-    
-else:
-    print 'Skipping clustering'
+#if args.k != [0]:
+#    print 'Running KMeans Clustering with new metric'
+#    for k in args.k:
+#        k = int(k)
+#        centroids, labels = scipy.cluster.vq.kmeans2(transformed_data, k=k, minit='points')
+#        self_transitions = 0.0
+#        for i in xrange(1, len(labels)):
+#            if labels[i] == labels[i-1]:
+#                self_transitions += 1
+#        print 'Self-transition probability (k={0}): {1}'.format(k, self_transitions / (len(labels) - 1))
+#
+#    print 'Running KMeans clustering with euclidean metric'
+#    for k in args.k:
+#        k = int(k)
+#        centroids, labels = scipy.cluster.vq.kmeans2(data, k=k, minit='points')
+#        self_transitions = 0.0
+#        for i in xrange(1, len(labels)):
+#            if labels[i] == labels[i-1]:
+#                self_transitions += 1
+#        print 'Self-transition probability (k={0}): {1}'.format(k, self_transitions / (len(labels) - 1))
+#    
+#else:
+#    print 'Skipping clustering'
 
 scipy.io.mmwrite(args.output, X)
 print '\nSaved {0}'.format(args.output)

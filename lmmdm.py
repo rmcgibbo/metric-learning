@@ -7,12 +7,61 @@ from scipy.sparse.linalg import eigs as sparse_eigs
 from scipy.sparse.linalg import eigsh as sparse_eigsh
 from memoize import memoized
 
+def get_triplets(trajectory, close, far, vector_metric, alt_metric=None, alt_cutoff=None, alt_comparator=None,
+    prepared_alt_reference=None):
+    
+    if alt_cutoff is not None:
+        assert alt_metric is not None
+        assert alt_comparator is not None
+        assert prepared_alt_reference is not None
+        
+        rmsdtraj = alt_metric.prepare_trajectory(trajectory[::close])
+        a_indices = np.where(alt_comparator(alt_metric.one_to_all(prepared_alt_reference, rmsdtraj, 0),
+                                            alt_cutoff))[0] * close
+        b_indices = a_indices + close
+        c_indices = a_indices + far
+        print len(a_indices)
+        
+        #print 'a_indices', a_indices
+        #print 'b_indices', b_indices
+        #print 'c_indices', c_indices
+        #print 'traj length', len(trajectory)
+        
+        del rmsdtraj
+    else:
+        a_indices = np.arange(0, len(trajectory), close)
+        b_indices = a_indices + close
+        c_indices = a_indices + far
+    
+    nskim = np.count_nonzero(c_indices >= len(trajectory))
+    if nskim > 0:
+        a_indices = a_indices[:-nskim]
+        b_indices = b_indices[:-nskim]
+        c_indices = c_indices[:-nskim]
+    
+    num_triplets = float(len(a_indices))
+    print 'retained {0} / {1} = {2}'.format(num_triplets, len(trajectory[::close]), num_triplets/len(trajectory[::close]))
+    a = vector_metric.prepare_trajectory(trajectory[a_indices])
+    b = vector_metric.prepare_trajectory(trajectory[b_indices])
+    c = vector_metric.prepare_trajectory(trajectory[c_indices])
+
+    
+    #print 'a_indices', a_indices
+    #print 'a_indices[:-nskim]', a_indices[:-nskim]
+    #print 'c_indices', c_indices
+    #print 'c_indices'
+    #print a.shape, b.shape, c.shape, nskim
+    #sys.exit(1)
+    return a, b, c
+    
 def print_lowprec(X, printer=sys.stdout, precision=2):
     po = np.get_printoptions()
     np.set_printoptions(precision=precision)
     print >> printer, X
     np.set_printoptions(**po)
     
+
+
 class DiagonalMetricCalculator(object):
     @classmethod
     def optimize_metric(cls, triplets, alpha, verbose=True):
@@ -45,18 +94,18 @@ class DiagonalMetricCalculator(object):
             new = np.copy(rho_and_omegas)
             new[i] += dx
             o2 =  self.minus_huber_objective_and_grad(new)[0]
-
+            
             print 'numeric' , (o2-o1)/dx
             print 'analytic', g1[i]
             assert np.abs(((o2 - o1)/dx - g1[i])/(max(g1[i], (o2-o1)/dx))) < 1e-5
-
+            
         rho_and_omegas = np.empty(self.dim + 1)
         rho_and_omegas[0] = np.random.randn()
         rho_and_omegas[1:] = np.random.randn(self.dim)
-
+        
         for i in range(len(rho_and_omegas)):
             test_deriv(i)
-
+            
         print 'Passed Test 3'
     
     def test2(self):
@@ -157,12 +206,12 @@ class DiagonalMetricCalculator(object):
         greater_h = np.where(margin_minus_rho >= h)[0]
         between = np.where(np.logical_and(-h <  np.array(margin_minus_rho), margin_minus_rho < h))[0]
         less_minus_h = np.where(margin_minus_rho <= -h)[0]
-
+        
         t1 = np.sum(np.square((h - margin_minus_rho[between]))) / (4*h*self.num_triplets)
         t2 = -np.sum(margin_minus_rho[less_minus_h]) / self.num_triplets
         loss = t1 + t2
-        print 'Classification accuracy: {0}/{1}={2:5f}'.format(np.count_nonzero(margin > 0), self.num_triplets, np.count_nonzero(margin > 0)/self.num_triplets)
-
+        print 'Classification accuracy: {0}/{1} = {2:5f}'.format(np.count_nonzero(margin > 0), self.num_triplets, np.count_nonzero(margin > 0)/self.num_triplets)
+        
         objective = self.K * rho - loss
         
         grad = np.empty(self.dim + 1)
@@ -206,6 +255,7 @@ class DiagonalMetricCalculator(object):
         #print 'gradient', np.hstack(([partial_R], grad_W))
         return objective, np.hstack(([partial_R], grad_W))
     
+
 
 class MetricCalculator(object):
     @classmethod
@@ -276,7 +326,7 @@ class MetricCalculator(object):
             print >> self.printer, 'X'
             import scipy.sparse
             print_lowprec(scipy.sparse.triu(X).todense(), precision=2, printer=self.printer)
-
+            
             print >> self.printer
             
             X, finished = self._find_X(rho, X)
@@ -285,7 +335,7 @@ class MetricCalculator(object):
                 
             prev_obj = obj
         
-
+            
         print >> self.printer, '\nFinal Metric:'
         print >> self.printer, 'eigvals', np.real(np.linalg.eigvals(X))
         print >> self.printer, 'Contributions to the objective function'
