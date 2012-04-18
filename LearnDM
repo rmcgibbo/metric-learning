@@ -19,6 +19,7 @@ parser.add_argument('far', type=int)
 #parser.add_argument('k', type=int, nargs='+', default=[0])
 parser.add_argument('trajs', type=int, nargs='+', default=[-1])
 parser.add_argument('rmsd_cutoff', type=float, description='only use data from within this cutoff to pdb (nanometers). -1 means not used', default=-1)
+parser.add_argument('comparator', choices=['less', 'greater'], default='less')
 parser.add_argument('native_pdb', default='None')
 parser.add_argument('atom_indices', default='None')
 args = parser.parse_args()
@@ -52,7 +53,11 @@ for i in range(args.project['NumTrajs']):
     #traj = np.arange(args.project['TrajLengths'][i])
     if use_rmsd_cutoff:
         # useing comparator of np.less only selects the data closer than the RMSD cutoff
-        a,b,c = get_triplets(traj, args.close, args.far, metric, rmsd, args.rmsd_cutoff, np.less, pdb)
+        if args.comparator == 'less':
+            comparator = np.less
+        else:
+            comparator = np.greater
+        a,b,c = get_triplets(traj, args.close, args.far, metric, rmsd, args.rmsd_cutoff, comparator, pdb)
     else:
         a,b,c = get_triplets(traj, args.close, args.far, metric)
     
